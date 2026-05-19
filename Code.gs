@@ -245,19 +245,49 @@ function debugDiff() {
     return;
   }
 
-  Logger.log('Diff fields: ' + Object.keys(current[0]).filter(function(h) {
+  var diffFields = Object.keys(current[0]).filter(function(h) {
     return DIFF_EXCLUDE.indexOf(h) === -1;
-  }).join(', '));
+  });
+  Logger.log('Diff fields: ' + diffFields.join(', '));
+
+  // Log Status values for every entity where the two sheets disagree on any field
+  var currentById  = indexById_(current);
+  var previousById = indexById_(previous);
+  var mismatches   = 0;
+
+  Object.keys(currentById).forEach(function(id) {
+    if (!previousById[id]) return;
+    var curr = currentById[id];
+    var prev = previousById[id];
+    diffFields.forEach(function(field) {
+      var oldVal = prev[field] !== undefined ? prev[field] : '';
+      var newVal = curr[field] !== undefined ? curr[field] : '';
+      if (oldVal !== newVal) {
+        Logger.log('DIFF  id=' + id + '  field=' + field +
+                   '  prev=' + JSON.stringify(oldVal) +
+                   '  curr=' + JSON.stringify(newVal));
+        mismatches++;
+      }
+    });
+  });
+
+  // Also log Status values for the first 3 entities so we can sanity-check
+  Logger.log('--- Status sample (first 3 entities by ID) ---');
+  Object.keys(currentById).slice(0, 3).forEach(function(id) {
+    var currStatus = currentById[id]['Status'] || '(empty)';
+    var prevStatus = previousById[id] ? (previousById[id]['Status'] || '(empty)') : '(not in previous)';
+    Logger.log('id=' + id + '  curr.Status=' + JSON.stringify(currStatus) +
+               '  prev.Status=' + JSON.stringify(prevStatus));
+  });
 
   var changes = diffSheets_(current, previous);
-  Logger.log('Changes found: ' + changes.length);
-  changes.forEach(function(c) {
-    Logger.log(JSON.stringify(c));
-  });
+  Logger.log('Total changes found: ' + changes.length);
+  changes.slice(0, 20).forEach(function(c) { Logger.log(JSON.stringify(c)); });
 
   SpreadsheetApp.getUi().alert(
     'Debug Diff',
-    changes.length + ' change(s) found.\nCheck View → Logs for details.',
+    'Field mismatches: ' + mismatches + '\nChanges found: ' + changes.length +
+    '\nCheck View → Logs for details.',
     SpreadsheetApp.getUi().ButtonSet.OK
   );
 }
