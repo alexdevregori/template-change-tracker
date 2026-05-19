@@ -189,6 +189,7 @@ function exportHierarchy() {
   }
 
   var entities   = fetchAllEntities_(token);
+  resolveRelationshipPagination_(entities, token);
   var nameLookup = fetchNameLookup_(token);
   var rows       = entitiesToRows_(entities, fieldMap, headers, nameLookup);
   writeSheet_(ss, CONFIG.SHEET_CURRENT, headers, rows);
@@ -469,6 +470,38 @@ function fetchNameLookup_(token) {
 
   Logger.log('Fetched ' + Object.keys(lookup).length + ' lookup entities (releases/objectives/initiatives).');
   return lookup;
+}
+
+/**
+ * For any entity whose inline relationships were truncated (links.next is set),
+ * fetches remaining pages from GET /entities/{id}/relationships and appends
+ * them to e.relationships.data in-place so entitiesToRows_ sees a complete list.
+ */
+function resolveRelationshipPagination_(entities, token) {
+  var extraCalls = 0;
+
+  entities.forEach(function(e) {
+    var nextUrl = (e.relationships && e.relationships.links && e.relationships.links.next)
+      ? e.relationships.links.next
+      : null;
+
+    while (nextUrl) {
+      var response = apiGet_(nextUrl, token);
+      var body     = JSON.parse(response.getContentText());
+      assertOk_(response, body);
+
+      (body.data || []).forEach(function(rel) {
+        e.relationships.data.push(rel);
+      });
+
+      nextUrl = (body.links && body.links.next) ? body.links.next : null;
+      extraCalls++;
+    }
+  });
+
+  if (extraCalls > 0) {
+    Logger.log('Resolved relationship pagination: ' + extraCalls + ' extra API call(s).');
+  }
 }
 
 function apiGet_(url, token) {
