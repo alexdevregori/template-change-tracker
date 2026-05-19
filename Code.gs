@@ -245,6 +245,20 @@ function debugDiff() {
     return;
   }
 
+  // Check for duplicate column headers — a collision causes readSheet_ to
+  // overwrite built-in field values with custom field values of the same name
+  var rawHeaders = ss.getSheetByName(CONFIG.SHEET_CURRENT)
+    .getRange(1, 1, 1, ss.getSheetByName(CONFIG.SHEET_CURRENT).getLastColumn())
+    .getValues()[0].map(String);
+  var headerCounts = {};
+  rawHeaders.forEach(function(h) { headerCounts[h] = (headerCounts[h] || 0) + 1; });
+  var dupes = Object.keys(headerCounts).filter(function(h) { return headerCounts[h] > 1; });
+  if (dupes.length > 0) {
+    Logger.log('DUPLICATE HEADERS (causing silent overwrites): ' + dupes.join(', '));
+  } else {
+    Logger.log('No duplicate headers found.');
+  }
+
   var diffFields = Object.keys(current[0]).filter(function(h) {
     return DIFF_EXCLUDE.indexOf(h) === -1;
   });
@@ -338,12 +352,25 @@ function parseFieldMap_(body) {
 /**
  * Returns the full ordered header array: base fields followed by
  * custom fields sorted alphabetically by display name.
+ *
+ * If a custom field's display name collides with a built-in column name,
+ * it is prefixed with "[Custom] " to prevent readSheet_() from overwriting
+ * the built-in value when building row objects keyed by header name.
+ * fieldMap is updated in-place so entitiesToRows_() uses the same names.
  */
 function buildHeaders_(fieldMap) {
-  var customNames = Object.keys(fieldMap)
+  var customEntries = Object.keys(fieldMap)
     .map(function(uuid) { return { uuid: uuid, name: fieldMap[uuid] }; })
-    .sort(function(a, b) { return a.name.localeCompare(b.name); })
-    .map(function(x) { return x.name; });
+    .sort(function(a, b) { return a.name.localeCompare(b.name); });
+
+  var customNames = customEntries.map(function(x) {
+    var name = x.name;
+    if (BASE_HEADERS.indexOf(name) !== -1) {
+      name = '[Custom] ' + name;
+      fieldMap[x.uuid] = name;
+    }
+    return name;
+  });
 
   return BASE_HEADERS.concat(customNames);
 }
