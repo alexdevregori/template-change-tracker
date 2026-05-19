@@ -560,17 +560,13 @@ function readSheet_(ss, sheetName) {
   var sheet = ss.getSheetByName(sheetName);
   if (!sheet || sheet.getLastRow() <= 1) return [];
 
-  // getDisplayValues returns every cell as the string the user sees —
-  // avoids type-coercion surprises where getValues() returns Date objects
-  // or numbers that String() formats differently across Current vs Previous.
-  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
-  var dataRange = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn());
-  var rows = dataRange.getDisplayValues();
+  var data    = sheet.getDataRange().getValues();
+  var headers = data[0];
 
-  return rows.map(function(row) {
+  return data.slice(1).map(function(row) {
     var obj = {};
     headers.forEach(function(h, i) {
-      obj[h.trim()] = row[i] ? row[i].trim() : '';
+      obj[String(h)] = row[i] !== undefined && row[i] !== null ? String(row[i]) : '';
     });
     return obj;
   });
