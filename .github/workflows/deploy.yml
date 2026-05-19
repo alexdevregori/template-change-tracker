@@ -6,6 +6,7 @@ on:
     paths:
       - 'Code.gs'
       - 'appsscript.json'
+      - '.clasp.json'
 
 jobs:
   deploy:
