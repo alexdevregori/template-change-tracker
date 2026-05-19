@@ -26,12 +26,13 @@
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('Productboard')
-    .addItem('▶ Run Full Sync',        'runDailySync')
+    .addItem('▶ Run Full Sync',          'runDailySync')
     .addSeparator()
-    .addItem('Export Hierarchy',       'exportHierarchy')
-    .addItem('Build Changelog',        'buildChangelog')
+    .addItem('Export Hierarchy',         'exportHierarchy')
+    .addItem('Build Changelog',          'buildChangelog')
     .addSeparator()
     .addItem('⚙ Setup / Validate Token', 'setup')
+    .addItem('🔍 Debug Diff',            'debugDiff')
     .addToUi();
 }
 
@@ -224,7 +225,41 @@ function buildChangelog() {
  */
 function runDailySync() {
   exportHierarchy();
+  SpreadsheetApp.flush(); // ensure all sheet writes are committed before reading in buildChangelog
   buildChangelog();
+}
+
+/**
+ * Diagnostic tool: logs exactly what the diff sees without writing to Changelog.
+ * Run this from the menu if changes aren't appearing — check View → Logs afterwards.
+ */
+function debugDiff() {
+  var ss       = SpreadsheetApp.getActiveSpreadsheet();
+  var current  = readSheet_(ss, CONFIG.SHEET_CURRENT);
+  var previous = readSheet_(ss, CONFIG.SHEET_PREVIOUS);
+
+  Logger.log('Current rows: ' + current.length + ', Previous rows: ' + previous.length);
+
+  if (current.length === 0 || previous.length === 0) {
+    Logger.log('One or both sheets are empty — nothing to compare.');
+    return;
+  }
+
+  Logger.log('Diff fields: ' + Object.keys(current[0]).filter(function(h) {
+    return DIFF_EXCLUDE.indexOf(h) === -1;
+  }).join(', '));
+
+  var changes = diffSheets_(current, previous);
+  Logger.log('Changes found: ' + changes.length);
+  changes.forEach(function(c) {
+    Logger.log(JSON.stringify(c));
+  });
+
+  SpreadsheetApp.getUi().alert(
+    'Debug Diff',
+    changes.length + ' change(s) found.\nCheck View → Logs for details.',
+    SpreadsheetApp.getUi().ButtonSet.OK
+  );
 }
 
 
