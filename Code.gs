@@ -271,13 +271,19 @@ function debugDiff() {
     });
   });
 
-  // Also log Status values for the first 3 entities so we can sanity-check
-  Logger.log('--- Status sample (first 3 entities by ID) ---');
-  Object.keys(currentById).slice(0, 3).forEach(function(id) {
-    var currStatus = currentById[id]['Status'] || '(empty)';
-    var prevStatus = previousById[id] ? (previousById[id]['Status'] || '(empty)') : '(not in previous)';
-    Logger.log('id=' + id + '  curr.Status=' + JSON.stringify(currStatus) +
-               '  prev.Status=' + JSON.stringify(prevStatus));
+  // Log Status values for the first 3 entities that have a non-empty Status in either sheet
+  Logger.log('--- Status sample (first 3 entities with a Status value) ---');
+  var statusSampleCount = 0;
+  Object.keys(currentById).forEach(function(id) {
+    if (statusSampleCount >= 3) return;
+    var currStatus = currentById[id]['Status'] || '';
+    var prevStatus = previousById[id] ? (previousById[id]['Status'] || '') : '';
+    if (currStatus || prevStatus) {
+      Logger.log('id=' + id + '  type=' + (currentById[id]['Type'] || '') +
+                 '  curr.Status=' + JSON.stringify(currStatus) +
+                 '  prev.Status=' + JSON.stringify(prevStatus));
+      statusSampleCount++;
+    }
   });
 
   var changes = diffSheets_(current, previous);
