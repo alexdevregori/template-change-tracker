@@ -721,6 +721,12 @@ function diffSheets_(currentRows, previousRows) {
     if (!previousById[id]) {
       var r = currentById[id];
       changes.push([now, id, r['Name'] || '', r['Type'] || '', 'Added', '', '', '']);
+      diffFields.forEach(function(field) {
+        var val = r[field] !== undefined ? r[field] : '';
+        if (val !== '') {
+          changes.push([now, id, r['Name'] || '', r['Type'] || '', 'Added', field, '', val]);
+        }
+      });
     }
   });
 
@@ -729,6 +735,12 @@ function diffSheets_(currentRows, previousRows) {
     if (!currentById[id]) {
       var r = previousById[id];
       changes.push([now, id, r['Name'] || '', r['Type'] || '', 'Removed', '', '', '']);
+      diffFields.forEach(function(field) {
+        var val = r[field] !== undefined ? r[field] : '';
+        if (val !== '') {
+          changes.push([now, id, r['Name'] || '', r['Type'] || '', 'Removed', field, val, '']);
+        }
+      });
     }
   });
 
