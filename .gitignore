@@ -1,0 +1,22 @@
+# clasp credentials — never commit these
+.clasprc.json
+
+# clasp project config — safe to commit (just contains scriptId),
+# but list here if you'd rather not expose the script ID publicly
+# .clasp.json
+
+# Dependencies
+node_modules/
+
+# Environment / secrets
+.env
+.env.local
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp

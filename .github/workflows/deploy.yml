@@ -1,0 +1,29 @@
+name: Deploy to Apps Script
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Code.gs'
+      - 'appsscript.json'
+
+jobs:
+  deploy:
+    name: Push to Google Apps Script
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install clasp
+        run: npm install -g @google/clasp
+
+      - name: Authenticate clasp
+        # Store the contents of your local ~/.clasprc.json as a repo secret
+        # named CLASPRC_JSON. To get it: run `clasp login` locally, then
+        # copy the contents of ~/.clasprc.json.
+        run: echo '${{ secrets.CLASPRC_JSON }}' > ~/.clasprc.json
+
+      - name: Push to Apps Script
+        run: clasp push --force
