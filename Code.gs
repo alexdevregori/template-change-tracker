@@ -459,7 +459,15 @@ function fetchNameLookup_(token) {
     var url = CONFIG.API_BASE + '/entities?type[]=' + encodeURIComponent(type);
     while (url) {
       var response = apiGet_(url, token);
+      var code     = response.getResponseCode();
       var body     = JSON.parse(response.getContentText());
+
+      // Some workspaces don't have all entity types enabled — skip gracefully
+      if (code === 400 || code === 404) {
+        Logger.log('Skipping lookup type "' + type + '" — not available in this workspace (HTTP ' + code + ').');
+        break;
+      }
+
       assertOk_(response, body);
       (body.data || []).forEach(function(e) {
         lookup[e.id] = (e.fields && typeof e.fields.name === 'string') ? e.fields.name : e.id;
