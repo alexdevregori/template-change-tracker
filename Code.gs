@@ -53,8 +53,12 @@ var BASE_HEADERS = [
   'ID', 'Type', 'Name', 'Status', 'Owner Email',
   'Tags', 'Timeframe Start', 'Timeframe End',
   'Parent ID', 'Parent Type', 'Parent Name',
+  'Releases', 'Objectives', 'Initiatives',
   'Archived', 'Created At', 'Updated At', 'PB URL'
 ];
+
+// Entity types fetched only for name lookup (not written as rows to the sheet)
+var LOOKUP_TYPES = ['release', 'objective', 'initiative'];
 
 // These columns are excluded from change detection
 var DIFF_EXCLUDE = ['ID', 'Created At', 'Updated At', 'PB URL'];
@@ -184,8 +188,9 @@ function exportHierarchy() {
     rotateSheets_(ss);
   }
 
-  var entities = fetchAllEntities_(token);
-  var rows     = entitiesToRows_(entities, fieldMap, headers);
+  var entities   = fetchAllEntities_(token);
+  var nameLookup = fetchNameLookup_(token);
+  var rows       = entitiesToRows_(entities, fieldMap, headers, nameLookup);
   writeSheet_(ss, CONFIG.SHEET_CURRENT, headers, rows);
 
   if (firstRun) {
@@ -441,6 +446,31 @@ function fetchAllEntities_(token) {
   return all;
 }
 
+/**
+ * Fetches releases, objectives, and initiatives and returns { id → name }.
+ * Used to resolve relationship target names without adding those entity
+ * types as rows in the hierarchy sheet.
+ */
+function fetchNameLookup_(token) {
+  var lookup = {};
+
+  LOOKUP_TYPES.forEach(function(type) {
+    var url = CONFIG.API_BASE + '/entities?type[]=' + encodeURIComponent(type);
+    while (url) {
+      var response = apiGet_(url, token);
+      var body     = JSON.parse(response.getContentText());
+      assertOk_(response, body);
+      (body.data || []).forEach(function(e) {
+        lookup[e.id] = (e.fields && typeof e.fields.name === 'string') ? e.fields.name : e.id;
+      });
+      url = (body.links && body.links.next) ? body.links.next : null;
+    }
+  });
+
+  Logger.log('Fetched ' + Object.keys(lookup).length + ' lookup entities (releases/objectives/initiatives).');
+  return lookup;
+}
+
 function apiGet_(url, token) {
   var options = {
     method: 'get',
@@ -474,7 +504,7 @@ function assertOk_(response, body) {
 
 // --------------- DATA TRANSFORMATION ---------------
 
-function entitiesToRows_(entities, fieldMap, headers) {
+function entitiesToRows_(entities, fieldMap, headers, nameLookup) {
   // Build ID → entity map for parent name resolution
   var byId = {};
   entities.forEach(function(e) { byId[e.id] = e; });
@@ -502,18 +532,28 @@ function entitiesToRows_(entities, fieldMap, headers) {
     var tfEnd   = (f.timeframe && f.timeframe.endDate)   ? f.timeframe.endDate   : '';
 
     var parentId = '', parentType = '', parentName = '';
+    var releases = [], objectives = [], initiatives = [];
     var rels = (e.relationships && e.relationships.data) ? e.relationships.data : [];
-    for (var i = 0; i < rels.length; i++) {
-      if (rels[i].type === 'parent' && rels[i].target) {
-        parentId   = rels[i].target.id   || '';
-        parentType = rels[i].target.type || '';
-        var parentEntity = byId[parentId];
+
+    rels.forEach(function(rel) {
+      if (!rel.target) return;
+      var targetId   = rel.target.id   || '';
+      var targetType = rel.target.type || '';
+
+      if (rel.type === 'parent') {
+        parentId   = targetId;
+        parentType = targetType;
+        var parentEntity = byId[targetId];
         if (parentEntity && typeof parentEntity.fields.name === 'string') {
           parentName = parentEntity.fields.name;
         }
-        break;
+      } else if (rel.type === 'link') {
+        var linkedName = nameLookup[targetId] || targetId;
+        if (targetType === 'release')    releases.push(linkedName);
+        else if (targetType === 'objective')  objectives.push(linkedName);
+        else if (targetType === 'initiative') initiatives.push(linkedName);
       }
-    }
+    });
 
     var url = (e.links && e.links.html) ? e.links.html : '';
 
@@ -522,6 +562,7 @@ function entitiesToRows_(entities, fieldMap, headers) {
       e.id || '', e.type || '', name, status, ownerEmail,
       tags, tfStart, tfEnd,
       parentId, parentType, parentName,
+      releases.join(', '), objectives.join(', '), initiatives.join(', '),
       archived, e.createdAt || '', e.updatedAt || '', url
     ];
 
