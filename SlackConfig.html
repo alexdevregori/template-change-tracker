@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; font-size: 13px; color: #1d1c1d; padding: 20px; background: #fff; }
+  h3 { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+  label { display: block; font-weight: 600; margin-bottom: 4px; color: #616061; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  input[type=text], input[type=password] {
+    width: 100%; padding: 8px 10px; border: 1px solid #ddd; border-radius: 4px;
+    font-size: 13px; outline: none;
+  }
+  input[type=text]:focus, input[type=password]:focus { border-color: #4a154b; box-shadow: 0 0 0 2px rgba(74,21,75,.15); }
+  .field-group { margin-bottom: 16px; }
+  .row { display: flex; gap: 10px; align-items: flex-end; }
+  .row .field-group { flex: 1; margin-bottom: 0; }
+  button {
+    padding: 8px 16px; border: none; border-radius: 4px; font-size: 13px;
+    font-weight: 600; cursor: pointer; white-space: nowrap;
+  }
+  #testBtn  { background: #f8f8f8; border: 1px solid #ddd; color: #1d1c1d; }
+  #testBtn:hover  { background: #eee; }
+  #saveBtn  { background: #4a154b; color: #fff; }
+  #saveBtn:hover  { background: #611f69; }
+  button:disabled { opacity: .5; cursor: default; }
+  hr { border: none; border-top: 1px solid #eee; margin: 18px 0; }
+  .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .section-header h3 { margin: 0; }
+  .quick-links { font-size: 12px; }
+  .quick-links a { color: #4a154b; text-decoration: none; cursor: pointer; margin-left: 10px; }
+  .quick-links a:hover { text-decoration: underline; }
+  #fieldList { max-height: 210px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px; padding: 8px 10px; }
+  .check-item { display: flex; align-items: center; padding: 3px 0; }
+  .check-item input[type=checkbox] { margin-right: 8px; accent-color: #4a154b; width: 14px; height: 14px; flex-shrink: 0; }
+  .check-item .badge {
+    display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 5px;
+    border-radius: 3px; margin-left: 6px; text-transform: uppercase; letter-spacing: .04em;
+  }
+  .badge-event { background: #e8f5e9; color: #2e7d32; }
+  .action-row { display: flex; align-items: center; gap: 12px; margin-top: 18px; }
+  #status { font-size: 12px; }
+  .ok  { color: #2e7d32; }
+  .err { color: #c0392b; }
+  .hint { font-size: 11px; color: #888; margin-top: 14px; }
+  .loading { color: #888; font-style: italic; padding: 8px 0; }
+</style>
+</head>
+<body>
+
+<div class="field-group">
+  <label>Bot token (xoxb-...)</label>
+  <input type="password" id="botToken" placeholder="xoxb-..." autocomplete="off">
+</div>
+
+<div class="row" style="margin-bottom:16px;">
+  <div class="field-group">
+    <label>Channel</label>
+    <input type="text" id="channelId" placeholder="#product-updates or C01234ABC">
+  </div>
+  <button id="testBtn" onclick="sendTest()" disabled>Send test</button>
+</div>
+
+<hr>
+
+<div class="section-header">
+  <h3>Notify me when these change</h3>
+  <span class="quick-links">
+    <a onclick="selectAll()">Select all</a>
+    <a onclick="selectNone()">Select none</a>
+  </span>
+</div>
+<div id="fieldList"><div class="loading">Loading fields…</div></div>
+
+<div class="action-row">
+  <button id="saveBtn" onclick="save()" disabled>Save</button>
+  <span id="status"></span>
+</div>
+
+<p class="hint">Leave the bot token blank to disable Slack notifications.</p>
+
+<script>
+var configData = null;
+
+function setStatus(msg, isOk) {
+  var el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = isOk ? 'ok' : 'err';
+}
+
+function renderFields(available, saved) {
+  var list = document.getElementById('fieldList');
+  list.innerHTML = '';
+  available.forEach(function(field) {
+    var isEvent = field === 'Added' || field === 'Removed';
+    var div = document.createElement('div');
+    div.className = 'check-item';
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = field;
+    cb.checked = saved.indexOf(field) !== -1;
+    var lbl = document.createElement('span');
+    lbl.textContent = field;
+    div.appendChild(cb);
+    div.appendChild(lbl);
+    if (isEvent) {
+      var badge = document.createElement('span');
+      badge.className = 'badge badge-event';
+      badge.textContent = 'event';
+      div.appendChild(badge);
+    }
+    list.appendChild(div);
+  });
+}
+
+function getCheckedFields() {
+  return Array.from(document.querySelectorAll('#fieldList input[type=checkbox]'))
+    .filter(function(cb) { return cb.checked; })
+    .map(function(cb) { return cb.value; });
+}
+
+function selectAll()  { document.querySelectorAll('#fieldList input').forEach(function(cb) { cb.checked = true; }); }
+function selectNone() { document.querySelectorAll('#fieldList input').forEach(function(cb) { cb.checked = false; }); }
+
+function sendTest() {
+  var token   = document.getElementById('botToken').value.trim();
+  var channel = document.getElementById('channelId').value.trim();
+  setStatus('Sending…', true);
+  document.getElementById('testBtn').disabled = true;
+  google.script.run
+    .withSuccessHandler(function(res) {
+      document.getElementById('testBtn').disabled = false;
+      setStatus(res.ok ? '✓ Test message sent!' : '✗ ' + res.error, res.ok);
+    })
+    .withFailureHandler(function(e) {
+      document.getElementById('testBtn').disabled = false;
+      setStatus('✗ ' + e.message, false);
+    })
+    .testSlackMessage(token, channel);
+}
+
+function save() {
+  var token   = document.getElementById('botToken').value.trim();
+  var channel = document.getElementById('channelId').value.trim();
+  var fields  = getCheckedFields();
+  setStatus('Saving…', true);
+  document.getElementById('saveBtn').disabled = true;
+  google.script.run
+    .withSuccessHandler(function(res) {
+      document.getElementById('saveBtn').disabled = false;
+      if (res.ok) {
+        setStatus('✓ Saved!', true);
+        setTimeout(function() { google.script.host.close(); }, 800);
+      } else {
+        setStatus('✗ ' + res.error, false);
+      }
+    })
+    .withFailureHandler(function(e) {
+      document.getElementById('saveBtn').disabled = false;
+      setStatus('✗ ' + e.message, false);
+    })
+    .saveSlackConfig(token, channel, fields);
+}
+
+// Enable buttons once inputs have values
+function updateButtons() {
+  var hasToken   = document.getElementById('botToken').value.trim().length > 0;
+  var hasChannel = document.getElementById('channelId').value.trim().length > 0;
+  document.getElementById('testBtn').disabled = !(hasToken && hasChannel);
+  document.getElementById('saveBtn').disabled = false;
+}
+document.getElementById('botToken').addEventListener('input', updateButtons);
+document.getElementById('channelId').addEventListener('input', updateButtons);
+
+// Load config on open
+google.script.run
+  .withSuccessHandler(function(data) {
+    configData = data;
+    document.getElementById('botToken').value  = data.botToken  || '';
+    document.getElementById('channelId').value = data.channelId || '';
+    renderFields(data.availableFields, data.notifyFields);
+    updateButtons();
+    document.getElementById('saveBtn').disabled = false;
+  })
+  .withFailureHandler(function(e) {
+    document.getElementById('fieldList').innerHTML =
+      '<div class="err">Failed to load config: ' + e.message + '</div>';
+    document.getElementById('saveBtn').disabled = false;
+  })
+  .getSlackConfigData();
+</script>
+</body>
+</html>

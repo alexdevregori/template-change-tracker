@@ -32,6 +32,7 @@ function onOpen() {
     .addItem('Build Changelog',          'buildChangelog')
     .addSeparator()
     .addItem('⚙ Setup / Validate Token', 'setup')
+    .addItem('🔔 Slack Notifications...', 'openSlackConfigDialog')
     .addItem('🔍 Debug Diff',            'debugDiff')
     .addToUi();
 }
@@ -40,12 +41,17 @@ function onOpen() {
 // --------------- CONFIGURATION ---------------
 
 var CONFIG = {
-  TOKEN_KEY:       'PB_TOKEN',
-  SHEET_CURRENT:   'Current',
-  SHEET_PREVIOUS:  'Previous',
-  SHEET_CHANGELOG: 'Changelog',
-  API_BASE:        'https://api.productboard.com/v2',
-  ENTITY_TYPES:    ['product', 'component', 'feature', 'subfeature'],
+  TOKEN_KEY:        'PB_TOKEN',
+  SHEET_CURRENT:    'Current',
+  SHEET_PREVIOUS:   'Previous',
+  SHEET_CHANGELOG:  'Changelog',
+  API_BASE:         'https://api.productboard.com/v2',
+  ENTITY_TYPES:     ['product', 'component', 'feature', 'subfeature'],
+  SLACK_TOKEN_KEY:  'SLACK_BOT_TOKEN',
+  SLACK_CHANNEL_KEY:'SLACK_CHANNEL_ID',
+  SLACK_FIELDS_KEY: 'SLACK_NOTIFY_FIELDS',
+  SLACK_MAX_BLOCKS: 46,
+  SLACK_API_POST:   'https://slack.com/api/chat.postMessage',
 };
 
 // Built-in columns always written first, in this order
@@ -221,6 +227,7 @@ function buildChangelog() {
   if (changes.length > 0) {
     appendChangelog_(ss, changes);
     Logger.log('buildChangelog: logged ' + changes.length + ' change(s).');
+    sendSlackNotifications_(changes);
   } else {
     Logger.log('buildChangelog: no changes detected.');
   }
@@ -783,4 +790,257 @@ function appendChangelog_(ss, changes) {
 
   var nextRow = sheet.getLastRow() + 1;
   sheet.getRange(nextRow, 1, changes.length, CHANGELOG_HEADERS.length).setValues(changes);
+}
+
+
+// --------------- SLACK NOTIFICATIONS ---------------
+
+/**
+ * Opens the Slack configuration dialog from the menu.
+ */
+function openSlackConfigDialog() {
+  var html = HtmlService.createHtmlOutputFromFile('SlackConfig')
+    .setWidth(520)
+    .setHeight(620)
+    .setTitle('Slack Notifications');
+  SpreadsheetApp.getUi().showModalDialog(html, 'Slack Notifications');
+}
+
+/**
+ * Called from SlackConfig.html on load.
+ * Returns current saved config + the list of fields available to watch.
+ */
+function getSlackConfigData() {
+  var props = PropertiesService.getScriptProperties();
+  var rawFields = props.getProperty(CONFIG.SLACK_FIELDS_KEY);
+  var notifyFields = [];
+  try { notifyFields = rawFields ? JSON.parse(rawFields) : []; } catch (e) {}
+
+  // Build available fields from live sheet headers when possible
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var currentSheet = ss.getSheetByName(CONFIG.SHEET_CURRENT);
+  var baseFields;
+  if (currentSheet && currentSheet.getLastRow() >= 1) {
+    baseFields = currentSheet.getRange(1, 1, 1, currentSheet.getLastColumn())
+      .getValues()[0]
+      .map(String)
+      .filter(function(h) { return h && DIFF_EXCLUDE.indexOf(h) === -1; });
+  } else {
+    baseFields = BASE_HEADERS.filter(function(h) { return DIFF_EXCLUDE.indexOf(h) === -1; });
+  }
+
+  return {
+    botToken:        props.getProperty(CONFIG.SLACK_TOKEN_KEY)   || '',
+    channelId:       props.getProperty(CONFIG.SLACK_CHANNEL_KEY) || '',
+    notifyFields:    notifyFields,
+    availableFields: ['Added', 'Removed'].concat(baseFields),
+  };
+}
+
+/**
+ * Called from SlackConfig.html on save.
+ */
+function saveSlackConfig(botToken, channelId, selectedFields) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    props.setProperty(CONFIG.SLACK_TOKEN_KEY,   botToken   || '');
+    props.setProperty(CONFIG.SLACK_CHANNEL_KEY, channelId  || '');
+    props.setProperty(CONFIG.SLACK_FIELDS_KEY,  JSON.stringify(selectedFields || []));
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Called from SlackConfig.html to verify the connection without saving.
+ */
+function testSlackMessage(botToken, channelId) {
+  if (!botToken || !channelId) {
+    return { ok: false, error: 'Bot token and channel are required.' };
+  }
+  try {
+    var payload = JSON.stringify({
+      channel: channelId,
+      text: 'Test from Productboard Tracker — Slack is connected.',
+    });
+    var response = UrlFetchApp.fetch(CONFIG.SLACK_API_POST, {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { 'Authorization': 'Bearer ' + botToken },
+      payload: payload,
+      muteHttpExceptions: true,
+    });
+    var body = JSON.parse(response.getContentText());
+    if (body.ok) return { ok: true };
+    return { ok: false, error: body.error || 'Slack returned ok:false' };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Returns true if a change row should generate a Slack notification
+ * given the user's saved field preferences.
+ *
+ * change row: [timestamp, entityId, entityName, entityType, changeType, fieldName, oldVal, newVal]
+ */
+function isNotifiable_(changeRow, notifyFields) {
+  var changeType = changeRow[4];
+  var fieldName  = changeRow[5];
+
+  if (changeType === 'Added' || changeType === 'Removed') {
+    // Only the entity-level summary row (empty fieldName) triggers a notification.
+    // Field-detail rows for Added/Removed are suppressed to avoid flooding.
+    if (fieldName !== '') return false;
+    return notifyFields.indexOf(changeType) !== -1;
+  }
+
+  if (changeType === 'Modified') {
+    return notifyFields.indexOf(fieldName) !== -1;
+  }
+
+  return false;
+}
+
+/**
+ * Escapes Slack mrkdwn special characters in a string and truncates if needed.
+ */
+function slackEscape_(str) {
+  var s = String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  if (s.length > 300) s = s.slice(0, 297) + '...';
+  return s;
+}
+
+/**
+ * Builds a Slack Block Kit blocks array from the filtered changes.
+ * Groups by entity; each entity gets a section + optional field list + divider.
+ */
+function buildSlackBlocks_(filteredChanges) {
+  // Group rows by entityId, preserving first-appearance order
+  var order = [];
+  var groups = {};
+  filteredChanges.forEach(function(row) {
+    var id = row[1];
+    if (!groups[id]) {
+      groups[id] = [];
+      order.push(id);
+    }
+    groups[id].push(row);
+  });
+
+  var blocks = [];
+
+  order.forEach(function(id, idx) {
+    if (blocks.length >= CONFIG.SLACK_MAX_BLOCKS - 2) return; // leave room for truncation notice
+
+    var rows      = groups[id];
+    var firstRow  = rows[0];
+    var name      = slackEscape_(firstRow[2]);
+    var type      = slackEscape_(firstRow[3]);
+    var changeType = firstRow[4];
+
+    var headline = '*' + name + '* · ' + type;
+    if (changeType === 'Added')   headline += '  _(Added)_';
+    if (changeType === 'Removed') headline += '  _(Removed)_';
+
+    var modifiedRows = rows.filter(function(r) { return r[4] === 'Modified'; });
+
+    var sectionBlock = { type: 'section', text: { type: 'mrkdwn', text: headline } };
+
+    if (modifiedRows.length > 0) {
+      // Slack section fields max is 10 items
+      var fieldItems = modifiedRows.slice(0, 10).map(function(r) {
+        return {
+          type: 'mrkdwn',
+          text: '*' + slackEscape_(r[5]) + '*\n' + slackEscape_(r[6]) + ' → ' + slackEscape_(r[7]),
+        };
+      });
+      sectionBlock.fields = fieldItems;
+
+      // If more than 10 modified fields, emit overflow sections
+      var overflow = modifiedRows.slice(10);
+      while (overflow.length > 0 && blocks.length < CONFIG.SLACK_MAX_BLOCKS - 2) {
+        blocks.push(sectionBlock);
+        if (idx < order.length - 1) blocks.push({ type: 'divider' });
+        var chunk = overflow.splice(0, 10);
+        sectionBlock = {
+          type: 'section',
+          fields: chunk.map(function(r) {
+            return {
+              type: 'mrkdwn',
+              text: '*' + slackEscape_(r[5]) + '*\n' + slackEscape_(r[6]) + ' → ' + slackEscape_(r[7]),
+            };
+          }),
+        };
+      }
+    }
+
+    blocks.push(sectionBlock);
+    if (idx < order.length - 1) blocks.push({ type: 'divider' });
+  });
+
+  // Truncation notice
+  var rendered = order.slice(0, blocks.filter(function(b) { return b.type === 'section'; }).length);
+  if (rendered.length < order.length) {
+    var remaining = order.length - rendered.length;
+    blocks.push({
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: '_...and ' + remaining + ' more change(s) not shown. See the Changelog sheet for the full list._',
+      },
+    });
+  }
+
+  return blocks;
+}
+
+/**
+ * Filters the change rows by the user's saved notify-fields config and posts
+ * a Block Kit message to Slack. Silent-skips if Slack is not configured.
+ */
+function sendSlackNotifications_(changes) {
+  var props      = PropertiesService.getScriptProperties();
+  var botToken   = props.getProperty(CONFIG.SLACK_TOKEN_KEY);
+  var channelId  = props.getProperty(CONFIG.SLACK_CHANNEL_KEY);
+  var rawFields  = props.getProperty(CONFIG.SLACK_FIELDS_KEY);
+
+  if (!botToken || !channelId || rawFields === null) return;
+
+  var notifyFields;
+  try { notifyFields = JSON.parse(rawFields); } catch (e) { return; }
+  if (!notifyFields.length) return;
+
+  var filtered = changes.filter(function(row) {
+    return isNotifiable_(row, notifyFields);
+  });
+  if (!filtered.length) return;
+
+  var blocks = buildSlackBlocks_(filtered);
+  if (!blocks.length) return;
+
+  var payload = JSON.stringify({
+    channel: channelId,
+    blocks:  blocks,
+    text:    'Productboard change alert (' + filtered.length + ' update(s))',
+  });
+
+  try {
+    var response = UrlFetchApp.fetch(CONFIG.SLACK_API_POST, {
+      method:           'post',
+      contentType:      'application/json',
+      headers:          { 'Authorization': 'Bearer ' + botToken },
+      payload:          payload,
+      muteHttpExceptions: true,
+    });
+    var body = JSON.parse(response.getContentText());
+    if (body.ok) {
+      Logger.log('Slack notification sent (' + filtered.length + ' update(s)).');
+    } else {
+      Logger.log('Slack notification failed: ' + body.error);
+    }
+  } catch (e) {
+    Logger.log('Slack notification error: ' + e.message);
+  }
 }
